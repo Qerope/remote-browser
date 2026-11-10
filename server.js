@@ -13,9 +13,9 @@ import { build } from './userscripts.js';
 const LISTEN = process.env.RB_LISTEN || '/run/remote-browser/sock'; // unix path, or a port on 127.0.0.1
 const PROFILE = process.env.RB_PROFILE || './profile';
 const SCRIPTS = process.env.RB_SCRIPTS || './scripts';
-const PROXY = process.env.RB_PROXY || ''; // optional SOCKS5 exit as host:port; Chromium falls back to a direct connection if it is down
+const PROXY = process.env.RB_PROXY || ''; // optional SOCKS5 exit as host:port. No direct fallback: a flipping IP mid-session triggers captchas and logouts
 if (PROXY && !/^[\w.-]+:\d+$/.test(PROXY)) { console.error('RB_PROXY must be host:port'); process.exit(1); }
-const PAC = `function FindProxyForURL(){return "SOCKS5 ${PROXY}; DIRECT"}`;
+const PAC = `function FindProxyForURL(){return "SOCKS5 ${PROXY}"}`;
 const PASSWORD = process.env.RB_PASSWORD || '';
 const TOTP = process.env.RB_TOTP_SECRET || '';
 const VNC = process.env.RB_VNC || ''; // host:port of the VNC server to proxy (optional)
@@ -151,13 +151,15 @@ async function detach(v) {
   const c = v.cdp; v.cdp = null;
   await c?.send('Page.stopScreencast').catch(() => {}); await c?.detach().catch(() => {});
 }
-async function attach(v, page) {
+// Serialized: overlapping attaches used to leak a screencast per page, so old tabs kept streaming over new ones.
+const attach = (v, page) => (v.lock = v.lock.then(() => doAttach(v, page)).catch(() => {}));
+async function doAttach(v, page) {
   await detach(v);
   v.page = page;
   await page.setViewportSize({ width: v.w, height: v.h }).catch(() => {});
   const cdp = (v.cdp = await page.context().newCDPSession(page));
   cdp.on('Page.screencastFrame', (f) => {
-    if (v.ws.readyState !== 1) return;
+    if (v.cdp !== cdp || v.ws.readyState !== 1) return;
     v.ws.send(Buffer.from(f.data, 'base64'), () => cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}));
   });
   await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: v.w, maxHeight: v.h });
@@ -209,16 +211,27 @@ function onVnc(ws) {
 
 async function onConnect(ws) {
   viewer?.ws.close(4000, 'opened elsewhere');
-  const v = (viewer = { ws, page: null, cdp: null, w: 1280, h: 720, q: Promise.resolve() });
+  const v = (viewer = { ws, page: null, cdp: null, w: 1280, h: 720, q: Promise.resolve(), lock: Promise.resolve(), pend: {} });
   ws.on('close', () => { detach(v); if (viewer === v) viewer = null; });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
-    v.q = v.q.then(() => v.page && handle(v, m)).catch(() => {}); // serialize so input order is kept
+    if (m.t === 'move' || m.t === 'wheel') { // coalesce bursts: only the latest position / the summed scroll matters
+      const q = v.pend[m.t];
+      if (q) { if (m.t === 'move') Object.assign(q, m); else { q.dx = (+q.dx || 0) + (+m.dx || 0); q.dy = (+q.dy || 0) + (+m.dy || 0); } return; }
+      v.pend[m.t] = { ...m };
+    }
+    v.q = v.q.then(() => { // serialize so input order is kept
+      const mm = m.t === 'move' || m.t === 'wheel' ? v.pend[m.t] : m;
+      if (mm !== m) v.pend[m.t] = null;
+      return v.page && handle(v, mm);
+    }).catch(() => {});
   });
-  try {
-    const ctx = await getCtx();
-    await attach(v, ctx.pages()[0] ?? await ctx.newPage());
-  } catch (e) { console.error('browser start failed:', e.message); ws.close(1011, 'browser failed'); }
+  v.q = (async () => {
+    try {
+      const ctx = await getCtx();
+      await attach(v, ctx.pages()[0] ?? await ctx.newPage());
+    } catch (e) { console.error('browser start failed:', e.message); ws.close(1011, 'browser failed'); }
+  })();
 }
 
 if (isNaN(LISTEN)) { fs.rmSync(LISTEN, { force: true }); server.listen(LISTEN, () => fs.chmodSync(LISTEN, 0o660)); }
