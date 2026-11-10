@@ -19,8 +19,8 @@ if [ ! -f /etc/remote-browser.env ]; then
   echo "Generated a password: sudo cat /etc/remote-browser.env"
 fi
 
-# Also deny the host's own public addresses (the browser could otherwise reach local services through them).
-PUB=$(ip -o addr show scope global | awk '{print $4}' | grep -v '^10\.\|^172\.\(1[6-9]\|2.\|3[01]\)\.\|^192\.168\.\|^fd\|^fc' | sed 's#/.*#/32#; s#^\(.*:.*\)/32#\1/128#' | tr '\n' ' ')
+# Also deny public addresses configured on this host. On NAT clouds (e.g. Oracle) there are none, so the public IP only exposes what is already public.
+PUB=$(ip -o addr show scope global | awk '{print $4}' | grep -v '^10\.\|^172\.\(1[6-9]\|2.\|3[01]\)\.\|^192\.168\.\|^fd\|^fc' | sed 's#/.*#/32#; s#^\(.*:.*\)/32#\1/128#' | tr '\n' ' ' || true)
 sed "s#^IPAddressDeny=.*#& $PUB#" "$SRC/deploy/remote-browser.service" > /etc/systemd/system/remote-browser.service
 systemctl daemon-reload
 systemctl enable remote-browser
