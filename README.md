@@ -45,6 +45,14 @@ RB_PASSWORD=some-long-password RB_LISTEN=8080 npm start
 npm test
 ```
 
+## Fewer captchas: exit through your own IP
+
+Datacenter IPs trigger captchas and logouts. `tools/mac-exit` is a small SOCKS5 proxy for a home machine on the same ZeroTier network (macOS LaunchAgent, `tools/mac-exit/install.sh <its-zt-ip> <server-zt-ip>`). It only accepts the server and refuses private, loopback and LAN destinations. Then install with `PROXY=<its-zt-ip>:1080`. There is no direct fallback, so your IP never changes mid-session; if the home machine is asleep the browser has no internet. To turn it off, delete the `RB_PROXY` line from `/etc/remote-browser.env` and restart the service.
+
+## Userscripts
+
+Open **Scripts** in the toolbar. Tampermonkey-style: `@match`/`@include`, `@run-at`, `GM_addStyle`, `GM_getValue`, `GM_setValue`; top frame only; applied on the next page load.
+
 ## Limits
 
 One viewer at a time (a new window replaces the old one). No touch input, no copy-out of the remote clipboard, no audio. On macOS, Cmd is sent as Ctrl. Headless Chromium, so some sites that detect headless may object.

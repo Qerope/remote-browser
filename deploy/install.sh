@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run as root from a checkout of this repo on Ubuntu 22.04+. Idempotent: safe to re-run to update.
 # Usage: sudo [DOMAIN=rb.example.com] [VNC=10.147.20.2:5900] ./deploy/install.sh [login-user-to-grant-socket-access]
-# PROXY=host:port sends browser traffic through a SOCKS5 exit (see tools/mac-exit), falling back to direct if it is down.
+# PROXY=host:port sends all browser traffic through a SOCKS5 exit (see tools/mac-exit). No direct fallback: if the exit is down the browser has no internet, so your IP never flips mid-session.
 # DOMAIN sets up nginx + a Let's Encrypt cert. VNC enables the /vnc.html viewer for that host:port.
 set -euo pipefail
 ME=${1:-${SUDO_USER:-}}
