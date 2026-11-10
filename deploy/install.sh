@@ -35,6 +35,7 @@ if [ -n "${DOMAIN:-}" ]; then
   usermod -aG rbrowser www-data
   sed "s#__DOMAIN__#$DOMAIN#" "$SRC/deploy/nginx.conf" > /etc/nginx/sites-available/remote-browser
   ln -sf /etc/nginx/sites-available/remote-browser /etc/nginx/sites-enabled/remote-browser
+  nginx -t || { rm -f /etc/nginx/sites-enabled/remote-browser; echo 'nginx config invalid, rolled back'; exit 1; }
   systemctl restart nginx # restart, not reload: picks up the new group
   [ -d /etc/letsencrypt/live/"$DOMAIN" ] || certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
   echo "Public at https://$DOMAIN"
