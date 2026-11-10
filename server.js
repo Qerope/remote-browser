@@ -1,26 +1,41 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import net from 'node:net';
+import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { WebSocketServer } from 'ws';
 import { normUrl } from './url.js';
+import { totp } from './totp.js';
 
 const LISTEN = process.env.RB_LISTEN || '/run/remote-browser/sock'; // unix path, or a port on 127.0.0.1
 const PROFILE = process.env.RB_PROFILE || './profile';
 const PASSWORD = process.env.RB_PASSWORD || '';
-if (PASSWORD.length < 12) { console.error('RB_PASSWORD must be at least 12 characters'); process.exit(1); }
+const TOTP = process.env.RB_TOTP_SECRET || '';
+const VNC = process.env.RB_VNC || ''; // host:port of the VNC server to proxy (optional)
+if (PASSWORD.length < 12 || !/^[A-Z2-7]{16,}$/i.test(TOTP)) { console.error('RB_PASSWORD (12+ chars) and RB_TOTP_SECRET (base32, 16+ chars) are required'); process.exit(1); }
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const pub = (f) => fs.readFileSync(new URL('./public/' + f, import.meta.url));
-const FILES = { '/app.js': ['app.js', 'text/javascript', true], '/style.css': ['style.css', 'text/css', false] };
+const FILES = { '/app.js': ['app.js', 'text/javascript', true], '/vnc.js': ['vnc.js', 'text/javascript', true], '/vnc.html': ['vnc.html', 'text/html', true], '/style.css': ['style.css', 'text/css', false] };
+const NOVNC = new URL('./node_modules/@novnc/novnc/', import.meta.url).pathname.replace(/\/$/, '');
 const HEAD = {
-  'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store',
 };
 
-// ---- auth: in-memory sessions, global login throttle ----
+// ---- auth: password + TOTP, in-memory sessions, per-IP login throttle ----
 const sessions = new Map(); // token -> expiry
-let fails = [];
+const fails = new Map(); // ip -> failure timestamps
+let lastStep = 0; // a TOTP code works once
+const same = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
+const codeOk = (code) => {
+  for (const d of [-1, 0, 1]) {
+    const step = Math.floor(Date.now() / 30000) + d;
+    if (step > lastStep && same(totp(TOTP, step * 30000), code)) { lastStep = step; return true; }
+  }
+  return false;
+};
 const authed = (req) => {
   const t = /(?:^|; )rb=([a-f0-9]{64})/.exec(req.headers.cookie || '')?.[1];
   return !!t && (sessions.get(t) ?? 0) > Date.now();
@@ -32,11 +47,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url === '/login') {
     let body = '';
     for await (const c of req) if ((body += c).length > 1024) return send(413, 'too large');
-    const now = Date.now();
-    fails = fails.filter((t) => now - t < 60_000);
-    if (fails.length >= 5) return send(429, 'Too many attempts, wait a minute.');
-    const pw = new URLSearchParams(body).get('password') ?? '';
-    if (!crypto.timingSafeEqual(sha(pw), sha(PASSWORD))) { fails.push(now); return send(401, pub('login.html').toString().replace('<!--err-->', '<p>Wrong password.</p>')); }
+    const now = Date.now(), ip = req.headers['x-real-ip'] || 'local'; // set by nginx; the socket is not reachable otherwise
+    const recent = (fails.get(ip) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= 5) return send(429, 'Too many attempts, wait a minute.');
+    const form = new URLSearchParams(body);
+    if (!(same(form.get('password') ?? '', PASSWORD) && codeOk((form.get('code') ?? '').replace(/\s/g, '')))) {
+      fails.set(ip, [...recent, now]); if (fails.size > 1000) fails.clear();
+      return send(401, pub('login.html').toString().replace('<!--err-->', '<p>Wrong password or code.</p>'));
+    }
     const token = crypto.randomBytes(32).toString('hex');
     sessions.set(token, now + 7 * 864e5);
     const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
@@ -44,7 +62,13 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method !== 'GET') return send(405, '');
   if (url === '/') return authed(req) ? send(200, pub('index.html')) : send(200, pub('login.html'));
+  if (url.startsWith('/novnc/')) { // noVNC library files only
+    const f = path.join(NOVNC, url.slice(7));
+    if (!authed(req) || !/^(core|vendor)\//.test(path.relative(NOVNC, f)) || !f.endsWith('.js') || !fs.existsSync(f)) return send(404, 'not found', 'text/plain');
+    return send(200, fs.readFileSync(f), 'text/javascript; charset=utf-8');
+  }
   const f = FILES[url];
+  if (url.startsWith('/vnc') && !VNC) return send(404, 'VNC is not configured', 'text/plain');
   if (!f) return send(404, 'not found', 'text/plain');
   if (f[2] && !authed(req)) return send(401, 'unauthorized', 'text/plain');
   send(200, pub(f[0]), f[1] + '; charset=utf-8');
@@ -120,9 +144,18 @@ async function handle(v, m) {
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 server.on('upgrade', (req, sock, head) => {
   const o = req.headers.origin;
-  if (new URL(req.url, 'http://x').pathname !== '/ws' || !authed(req) || (o && new URL(o).host !== req.headers.host)) { sock.write('HTTP/1.1 403 Forbidden\r\n\r\n'); return sock.destroy(); }
-  wss.handleUpgrade(req, sock, head, onConnect);
+  const p = new URL(req.url, 'http://x').pathname;
+  if (!(p === '/ws' || (p === '/vnc' && VNC)) || !authed(req) || (o && new URL(o).host !== req.headers.host)) { sock.write('HTTP/1.1 403 Forbidden\r\n\r\n'); return sock.destroy(); }
+  wss.handleUpgrade(req, sock, head, p === '/vnc' ? onVnc : onConnect);
 });
+// Raw RFB bytes between the browser (noVNC) and the VNC server, no inspection.
+function onVnc(ws) {
+  const [host, port] = [VNC.slice(0, VNC.lastIndexOf(':')), +VNC.slice(VNC.lastIndexOf(':') + 1)];
+  const tcp = net.connect(port, host);
+  tcp.on('data', (d) => ws.send(d)).on('close', () => ws.close()).on('error', () => ws.close());
+  ws.on('message', (d) => tcp.write(d)).on('close', () => tcp.destroy());
+}
+
 async function onConnect(ws) {
   viewer?.ws.close(4000, 'opened elsewhere');
   const v = (viewer = { ws, page: null, cdp: null, w: 1280, h: 720, q: Promise.resolve() });

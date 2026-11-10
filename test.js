@@ -6,6 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { normUrl } from './url.js';
+import { totp } from './totp.js';
+
+const SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+
+test('totp matches the RFC 6238 vector', () => assert.equal(totp(SECRET, 59000), '287082'));
 
 test('normUrl allows http(s)/hosts/search and blocks other schemes', () => {
   assert.equal(normUrl('https://a.com/x'), 'https://a.com/x');
@@ -17,7 +22,7 @@ test('normUrl allows http(s)/hosts/search and blocks other schemes', () => {
 
 test('auth gates everything that matters', async (t) => {
   const sock = path.join(os.tmpdir(), `rb-test-${process.pid}.sock`);
-  const p = spawn('node', ['server.js'], { env: { ...process.env, RB_LISTEN: sock, RB_PASSWORD: 'correct-horse-battery' } });
+  const p = spawn('node', ['server.js'], { env: { ...process.env, RB_LISTEN: sock, RB_PASSWORD: 'correct-horse-battery', RB_TOTP_SECRET: SECRET } });
   t.after(() => p.kill());
   const req = (method, url, { body, cookie } = {}) => new Promise((resolve, reject) => {
     const r = http.request({ socketPath: sock, method, path: url, headers: { ...(cookie && { cookie }), ...(body && { 'content-type': 'application/x-www-form-urlencoded' }) } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => resolve({ res, d })); });
@@ -26,8 +31,11 @@ test('auth gates everything that matters', async (t) => {
   for (let i = 0; i < 50; i++) { try { await req('GET', '/style.css'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
   assert.match((await req('GET', '/')).d, /type="password"/);
   assert.equal((await req('GET', '/app.js')).res.statusCode, 401);
-  assert.equal((await req('POST', '/login', { body: 'password=nope' })).res.statusCode, 401);
-  const ok = await req('POST', '/login', { body: 'password=correct-horse-battery' });
+  assert.equal((await req('POST', '/login', { body: 'password=nope&code=000000' })).res.statusCode, 401);
+  assert.equal((await req('POST', '/login', { body: 'password=correct-horse-battery&code=000000' })).res.statusCode, 401, 'right password, wrong code');
+  const code = totp(SECRET);
+  const ok = await req('POST', '/login', { body: `password=correct-horse-battery&code=${code}` });
+  assert.equal((await req('POST', '/login', { body: `password=correct-horse-battery&code=${code}` })).res.statusCode, 401, 'code replay');
   assert.equal(ok.res.statusCode, 303);
   const cookie = ok.res.headers['set-cookie'][0].split(';')[0];
   assert.equal((await req('GET', '/app.js', { cookie })).res.statusCode, 200);

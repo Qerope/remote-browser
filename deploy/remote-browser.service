@@ -12,7 +12,8 @@ Environment=RB_PROFILE=/var/lib/remote-browser/profile
 Environment=RB_LISTEN=/run/remote-browser/sock
 Environment=HOME=/var/lib/remote-browser
 ExecStart=/usr/bin/node server.js
-Restart=on-failure
+Restart=always
+RestartSec=3
 RuntimeDirectory=remote-browser
 RuntimeDirectoryMode=0750
 StateDirectory=remote-browser

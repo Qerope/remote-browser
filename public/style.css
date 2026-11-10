@@ -17,3 +17,8 @@ button, input { font: inherit; color: inherit; background: var(--on); border: 1p
 .login p { color: #dc2626; margin: 0; }
 .login label { display: grid; gap: 4px; }
 button:focus-visible, input:focus-visible, #screen:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
+#bar a, #bar span { align-self: center; color: inherit; }
+#bar a { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; text-decoration: none; }
+#cred { display: flex; gap: 4px; padding: 0 6px 6px; }
+#cred[hidden], #cred [hidden] { display: none; }
+#stage > div { height: 100%; }
