@@ -8,6 +8,7 @@ let latest = 0;
 ws.onmessage = async (e) => {
   if (typeof e.data === 'string') return onMeta(JSON.parse(e.data));
   const n = ++latest, bm = await createImageBitmap(e.data);
+  send({ t: 'ack' }); // tells the server it may send the next frame
   if (n !== latest) return bm.close();
   if (c.width !== bm.width || c.height !== bm.height) { c.width = bm.width; c.height = bm.height; }
   g.drawImage(bm, 0, 0); bm.close();

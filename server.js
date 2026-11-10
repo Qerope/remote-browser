@@ -148,21 +148,35 @@ async function tabs(v) {
   sendJson(v, { t: 'tabs', active: pages.indexOf(v.page), tabs: await Promise.all(pages.map(async (p) => ({ title: await p.title().catch(() => ''), url: p.url() }))) });
 }
 async function detach(v) {
+  clearTimeout(v.idle);
   const c = v.cdp; v.cdp = null;
   await c?.send('Page.stopScreencast').catch(() => {}); await c?.detach().catch(() => {});
 }
 // Serialized: overlapping attaches used to leak a screencast per page, so old tabs kept streaming over new ones.
 const attach = (v, page) => (v.lock = v.lock.then(() => doAttach(v, page)).catch(() => {}));
+async function sharpen(v, cdp, seq) {
+  if (v.cdp !== cdp || v.seq !== seq || v.inflight > 1 || v.ws.readyState !== 1) return;
+  const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 88 }).catch(() => null);
+  if (r && v.cdp === cdp && v.seq === seq && v.ws.readyState === 1) { v.ws.send(Buffer.from(r.data, 'base64')); v.inflight++; }
+}
 async function doAttach(v, page) {
   await detach(v);
   v.page = page;
   await page.setViewportSize({ width: v.w, height: v.h }).catch(() => {});
   const cdp = (v.cdp = await page.context().newCDPSession(page));
+  v.inflight = 0; v.deferred = []; v.seq = 0;
+  // Pacing: the client acks every frame it receives; Chromium is only told to continue while <3 frames are unacked,
+  // so a slow link lowers the frame rate instead of building up seconds of lag.
+  const ack = (f) => cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+  v.release = () => { v.inflight = Math.max(0, v.inflight - 1); const f = v.deferred.shift(); if (f) ack(f); };
   cdp.on('Page.screencastFrame', (f) => {
     if (v.cdp !== cdp || v.ws.readyState !== 1) return;
-    v.ws.send(Buffer.from(f.data, 'base64'), () => cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}));
+    v.ws.send(Buffer.from(f.data, 'base64')); v.inflight++; v.seq++;
+    if (v.inflight < 3) ack(f); else v.deferred.push(f);
+    clearTimeout(v.idle); const seq = v.seq;
+    v.idle = setTimeout(() => sharpen(v, cdp, seq), 300); // motion frames are low quality; once still, send one crisp frame
   });
-  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: v.w, maxHeight: v.h });
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 50, maxWidth: v.w, maxHeight: v.h });
   await page.bringToFront().catch(() => {});
   tabs(v);
 }
@@ -215,6 +229,7 @@ async function onConnect(ws) {
   ws.on('close', () => { detach(v); if (viewer === v) viewer = null; });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
+    if (m.t === 'ack') return v.release?.();
     if (m.t === 'move' || m.t === 'wheel') { // coalesce bursts: only the latest position / the summed scroll matters
       const q = v.pend[m.t];
       if (q) { if (m.t === 'move') Object.assign(q, m); else { q.dx = (+q.dx || 0) + (+m.dx || 0); q.dy = (+q.dy || 0) + (+m.dy || 0); } return; }
