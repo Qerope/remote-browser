@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import net from 'node:net';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { WebSocketServer } from 'ws';
@@ -101,7 +102,11 @@ const listScripts = () => (fs.existsSync(SCRIPTS) ? fs.readdirSync(SCRIPTS) : []
 const hooks = new WeakMap(); // page -> { cdp, ids } for registered userscripts
 async function applyScripts(p) {
   let h = hooks.get(p);
-  if (!h) hooks.set(p, (h = { cdp: await p.context().newCDPSession(p), ids: [] }));
+  if (!h) {
+    const cdp = await p.context().newCDPSession(p);
+    await cdp.send('Page.enable'); // without it, addScriptToEvaluateOnNewDocument silently does nothing
+    hooks.set(p, (h = { cdp, ids: [] }));
+  }
   for (const identifier of h.ids.splice(0)) await h.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {});
   for (const s of listScripts()) {
     const source = build(s.code);
@@ -109,11 +114,15 @@ async function applyScripts(p) {
   }
 }
 const applyAll = () => ctxP?.then((ctx) => ctx.pages().forEach((p) => applyScripts(p).catch(() => {}))); // takes effect on the next page load
+// Headless Chromium announces itself as 'HeadlessChrome' in its user agent, which is what bot checks look for.
+const chromeMajor = () => { try { return /(\d+)\./.exec(execFileSync(chromium.executablePath(), ['--version']))[1]; } catch {} };
 function getCtx() {
+  const major = chromeMajor();
   return (ctxP ??= chromium.launchPersistentContext(PROFILE, {
     // Full Chromium in new-headless mode and without automation flags, so sites see an ordinary browser (fewer captchas).
     channel: 'chromium', headless: true, chromiumSandbox: true, acceptDownloads: false, viewport: { width: 1280, height: 720 },
     locale: 'en-US', ignoreDefaultArgs: ['--enable-automation'], args: ['--disable-blink-features=AutomationControlled'],
+    ...(major && { userAgent: `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36` }),
     ...(PROXY && { proxy: { server: PROXY } }),
   }).then((ctx) => {
     ctx.on('close', () => (ctxP = undefined));
