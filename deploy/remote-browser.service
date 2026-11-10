@@ -1,0 +1,42 @@
+[Unit]
+Description=Remote Browser
+After=network-online.target
+
+[Service]
+User=rbrowser
+Group=rbrowser
+WorkingDirectory=/opt/remote-browser
+EnvironmentFile=/etc/remote-browser.env
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/remote-browser/browsers
+Environment=RB_PROFILE=/var/lib/remote-browser/profile
+Environment=RB_LISTEN=/run/remote-browser/sock
+Environment=HOME=/var/lib/remote-browser
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RuntimeDirectory=remote-browser
+RuntimeDirectoryMode=0750
+StateDirectory=remote-browser
+StateDirectoryMode=0700
+UMask=0007
+
+# The browser must not reach this host's own services, the LAN, or cloud metadata.
+# Loopback is blocked except the systemd-resolved stub, so DNS still works.
+# shortcut: add this host's public IPs here (install.sh does), re-run it if they change.
+IPAddressAllow=127.0.0.53
+IPAddressDeny=127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 ::1/128 fc00::/7 fe80::/10
+
+# Sandboxing. Chromium's own sandbox needs unprivileged user namespaces, so those stay allowed.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+MemoryMax=4G
+TasksMax=2048
+
+[Install]
+WantedBy=multi-user.target

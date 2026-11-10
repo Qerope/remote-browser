@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; --bg: #f4f4f5; --fg: #18181b; --line: #d4d4d8; --on: #fff; }
+@media (prefers-color-scheme: dark) { :root { --bg: #18181b; --fg: #f4f4f5; --line: #3f3f46; --on: #27272a; } }
+* { box-sizing: border-box; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+#tabs { display: flex; gap: 2px; overflow-x: auto; padding: 4px 4px 0; border-bottom: 1px solid var(--line); }
+#tabs .tab { display: flex; align-items: center; max-width: 220px; min-width: 90px; border: 1px solid var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; }
+#tabs .tab.on { background: var(--on); }
+#tabs .tab button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+#bar { display: flex; gap: 4px; padding: 6px; }
+#url { flex: 1; min-width: 0; }
+button, input { font: inherit; color: inherit; background: var(--on); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+#tabs button { border: 0; background: none; padding: 4px 8px; }
+#stage { flex: 1; min-height: 0; overflow: hidden; background: #000; }
+#screen { display: block; outline: none; cursor: default; }
+.login { align-items: center; justify-content: center; }
+.login form { display: grid; gap: 12px; width: min(320px, 90vw); }
+.login p { color: #dc2626; margin: 0; }
+.login label { display: grid; gap: 4px; }
+button:focus-visible, input:focus-visible, #screen:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }

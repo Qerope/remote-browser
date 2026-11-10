@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remote Browser</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<nav id="tabs" aria-label="Tabs"></nav>
+<form id="bar">
+  <button type="button" id="back" aria-label="Back">&larr;</button>
+  <button type="button" id="fwd" aria-label="Forward">&rarr;</button>
+  <button type="button" id="reload" aria-label="Reload">&#8635;</button>
+  <input id="url" aria-label="Address" autocomplete="off" spellcheck="false" placeholder="Search or enter address">
+</form>
+<main id="stage"><canvas id="screen" tabindex="0" aria-label="Remote page"></canvas></main>
+<script src="/app.js"></script>
+</body></html>
