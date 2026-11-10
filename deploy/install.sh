@@ -11,7 +11,7 @@ id rbrowser &>/dev/null || useradd --system --home-dir /var/lib/remote-browser -
 [ -n "$ME" ] && usermod -aG rbrowser "$ME"
 
 mkdir -p "$DST"
-cp -r "$SRC"/{server.js,url.js,totp.js,package.json,package-lock.json,public} "$DST"/
+cp -r "$SRC"/{server.js,url.js,totp.js,userscripts.js,package.json,package-lock.json,public} "$DST"/
 (cd "$DST" && npm ci --omit=dev --silent && PLAYWRIGHT_BROWSERS_PATH="$DST/browsers" npx --no-install playwright-core install --with-deps chromium)
 chown -R root:root "$DST"; chmod -R go+rX "$DST"
 

@@ -7,9 +7,12 @@ import { chromium } from 'playwright-core';
 import { WebSocketServer } from 'ws';
 import { normUrl } from './url.js';
 import { totp } from './totp.js';
+import { build } from './userscripts.js';
 
 const LISTEN = process.env.RB_LISTEN || '/run/remote-browser/sock'; // unix path, or a port on 127.0.0.1
 const PROFILE = process.env.RB_PROFILE || './profile';
+const SCRIPTS = process.env.RB_SCRIPTS || './scripts';
+const PROXY = process.env.RB_PROXY || ''; // optional upstream for the browser, e.g. socks5://10.147.20.2:1080
 const PASSWORD = process.env.RB_PASSWORD || '';
 const TOTP = process.env.RB_TOTP_SECRET || '';
 const VNC = process.env.RB_VNC || ''; // host:port of the VNC server to proxy (optional)
@@ -17,7 +20,7 @@ if (PASSWORD.length < 12 || !/^[A-Z2-7]{16,}$/i.test(TOTP)) { console.error('RB_
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const pub = (f) => fs.readFileSync(new URL('./public/' + f, import.meta.url));
-const FILES = { '/app.js': ['app.js', 'text/javascript', true], '/vnc.js': ['vnc.js', 'text/javascript', true], '/vnc.html': ['vnc.html', 'text/html', true], '/style.css': ['style.css', 'text/css', false] };
+const FILES = { '/app.js': ['app.js', 'text/javascript', true], '/vnc.js': ['vnc.js', 'text/javascript', true], '/scripts.js': ['scripts.js', 'text/javascript', true], '/scripts.html': ['scripts.html', 'text/html', true], '/vnc.html': ['vnc.html', 'text/html', true], '/style.css': ['style.css', 'text/css', false] };
 const NOVNC = new URL('./node_modules/@novnc/novnc/', import.meta.url).pathname.replace(/\/$/, '');
 const HEAD = {
   'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
@@ -60,6 +63,23 @@ const server = http.createServer(async (req, res) => {
     const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
     return send(303, '', 'text/plain', { location: '/', 'set-cookie': `rb=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure}` });
   }
+  if (url.startsWith('/api/scripts')) {
+    if (!authed(req)) return send(401, 'unauthorized', 'text/plain');
+    const name = decodeURIComponent(url.slice(13));
+    if (req.method === 'GET' && !name) return send(200, JSON.stringify(listScripts()), 'application/json');
+    if (!/^\w[\w .-]{0,58}\.user\.js$/.test(name)) return send(400, 'bad name', 'text/plain');
+    const file = path.join(SCRIPTS, name);
+    if (req.method === 'PUT') {
+      if (req.headers['content-type'] !== 'application/json') return send(415, '', 'text/plain');
+      let b = ''; for await (const c of req) if ((b += c).length > 200_000) return send(413, 'too large', 'text/plain');
+      let code; try { code = JSON.parse(b).code; } catch {}
+      if (typeof code !== 'string') return send(400, 'bad body', 'text/plain');
+      fs.mkdirSync(SCRIPTS, { recursive: true }); fs.writeFileSync(file, code);
+    } else if (req.method === 'DELETE') fs.rmSync(file, { force: true });
+    else return send(405, '', 'text/plain');
+    applyAll();
+    return send(204, '', 'text/plain');
+  }
   if (req.method !== 'GET') return send(405, '');
   if (url === '/') return authed(req) ? send(200, pub('index.html')) : send(200, pub('login.html'));
   if (url.startsWith('/novnc/')) { // noVNC library files only
@@ -76,9 +96,25 @@ const server = http.createServer(async (req, res) => {
 
 // ---- browser: one persistent profile, one viewer at a time ----
 let ctxP, viewer = null;
+const listScripts = () => (fs.existsSync(SCRIPTS) ? fs.readdirSync(SCRIPTS) : []).filter((n) => n.endsWith('.user.js')).sort()
+  .map((name) => ({ name, code: fs.readFileSync(path.join(SCRIPTS, name), 'utf8') }));
+const hooks = new WeakMap(); // page -> { cdp, ids } for registered userscripts
+async function applyScripts(p) {
+  let h = hooks.get(p);
+  if (!h) hooks.set(p, (h = { cdp: await p.context().newCDPSession(p), ids: [] }));
+  for (const identifier of h.ids.splice(0)) await h.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {});
+  for (const s of listScripts()) {
+    const source = build(s.code);
+    if (source) await h.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source }).then((r) => h.ids.push(r.identifier), () => {});
+  }
+}
+const applyAll = () => ctxP?.then((ctx) => ctx.pages().forEach((p) => applyScripts(p).catch(() => {}))); // takes effect on the next page load
 function getCtx() {
   return (ctxP ??= chromium.launchPersistentContext(PROFILE, {
-    headless: true, chromiumSandbox: true, acceptDownloads: false, viewport: { width: 1280, height: 720 },
+    // Full Chromium in new-headless mode and without automation flags, so sites see an ordinary browser (fewer captchas).
+    channel: 'chromium', headless: true, chromiumSandbox: true, acceptDownloads: false, viewport: { width: 1280, height: 720 },
+    locale: 'en-US', ignoreDefaultArgs: ['--enable-automation'], args: ['--disable-blink-features=AutomationControlled'],
+    ...(PROXY && { proxy: { server: PROXY } }),
   }).then((ctx) => {
     ctx.on('close', () => (ctxP = undefined));
     ctx.pages().forEach(wire);
@@ -87,6 +123,7 @@ function getCtx() {
   }, (e) => { ctxP = undefined; throw e; }));
 }
 function wire(p) {
+  applyScripts(p).catch(() => {});
   const upd = () => viewer && tabs(viewer);
   p.on('domcontentloaded', upd); p.on('framenavigated', upd); p.on('load', upd);
   p.on('close', async () => {
@@ -141,7 +178,7 @@ async function handle(v, m) {
   }
 }
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20, perMessageDeflate: false });
 server.on('upgrade', (req, sock, head) => {
   const o = req.headers.origin;
   const p = new URL(req.url, 'http://x').pathname;
@@ -152,7 +189,11 @@ server.on('upgrade', (req, sock, head) => {
 function onVnc(ws) {
   const [host, port] = [VNC.slice(0, VNC.lastIndexOf(':')), +VNC.slice(VNC.lastIndexOf(':') + 1)];
   const tcp = net.connect(port, host);
-  tcp.on('data', (d) => ws.send(d)).on('close', () => ws.close()).on('error', () => ws.close());
+  tcp.setNoDelay(true);
+  tcp.on('data', (d) => { // pause the Mac while the browser's link is backed up, instead of queueing stale frames
+    ws.send(d, () => tcp.isPaused() && ws.bufferedAmount < 1 << 20 && tcp.resume());
+    if (ws.bufferedAmount > 4 << 20) tcp.pause();
+  }).on('close', () => ws.close()).on('error', () => ws.close());
   ws.on('message', (d) => tcp.write(d)).on('close', () => tcp.destroy());
 }
 

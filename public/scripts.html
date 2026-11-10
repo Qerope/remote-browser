@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Userscripts</title><link rel="stylesheet" href="/style.css"></head>
+<body class="scripts">
+<header><a href="/">&larr; Browser</a><h1>Userscripts</h1></header>
+<div id="layout">
+  <ul id="list" aria-label="Scripts"></ul>
+  <form id="edit">
+    <label>File name <input id="name" placeholder="my-script.user.js" required pattern="\w[\w .\-]*\.user\.js"></label>
+    <label>Code <textarea id="code" spellcheck="false" required></textarea></label>
+    <div><button>Save</button> <button type="button" id="del">Delete</button> <span id="msg" role="status"></span></div>
+    <p>Needs an <code>@match</code> (or <code>@include</code>) line or it runs nowhere. Top frame only. Changes apply on the next page load. Available: <code>GM_addStyle</code>, <code>GM_getValue</code>, <code>GM_setValue</code>, <code>unsafeWindow</code>.</p>
+  </form>
+</div>
+<script src="/scripts.js"></script>
+</body></html>

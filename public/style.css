@@ -22,3 +22,10 @@ button:focus-visible, input:focus-visible, #screen:focus-visible { outline: 2px 
 #cred { display: flex; gap: 4px; padding: 0 6px 6px; }
 #cred[hidden], #cred [hidden] { display: none; }
 #stage > div { height: 100%; }
+.scripts { display: block; height: auto; padding: 12px; }
+.scripts header { display: flex; align-items: center; gap: 12px; } .scripts h1 { font-size: 18px; margin: 0; } .scripts header a { color: inherit; }
+#layout { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 16px; margin-top: 12px; }
+@media (max-width: 640px) { #layout { grid-template-columns: 1fr; } }
+#list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; align-content: start; } #list button { width: 100%; text-align: left; }
+#edit { display: grid; gap: 10px; } #edit label { display: grid; gap: 4px; }
+#code { min-height: 50vh; font: 13px ui-monospace, monospace; background: var(--on); color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }

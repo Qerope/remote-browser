@@ -9,6 +9,7 @@ WorkingDirectory=/opt/remote-browser
 EnvironmentFile=/etc/remote-browser.env
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/remote-browser/browsers
 Environment=RB_PROFILE=/var/lib/remote-browser/profile
+Environment=RB_SCRIPTS=/var/lib/remote-browser/scripts
 Environment=RB_LISTEN=/run/remote-browser/sock
 Environment=HOME=/var/lib/remote-browser
 ExecStart=/usr/bin/node server.js
