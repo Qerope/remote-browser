@@ -13,7 +13,9 @@ import { build } from './userscripts.js';
 const LISTEN = process.env.RB_LISTEN || '/run/remote-browser/sock'; // unix path, or a port on 127.0.0.1
 const PROFILE = process.env.RB_PROFILE || './profile';
 const SCRIPTS = process.env.RB_SCRIPTS || './scripts';
-const PROXY = process.env.RB_PROXY || ''; // optional upstream for the browser, e.g. socks5://10.147.20.2:1080
+const PROXY = process.env.RB_PROXY || ''; // optional SOCKS5 exit as host:port; Chromium falls back to a direct connection if it is down
+if (PROXY && !/^[\w.-]+:\d+$/.test(PROXY)) { console.error('RB_PROXY must be host:port'); process.exit(1); }
+const PAC = `function FindProxyForURL(){return "SOCKS5 ${PROXY}; DIRECT"}`;
 const PASSWORD = process.env.RB_PASSWORD || '';
 const TOTP = process.env.RB_TOTP_SECRET || '';
 const VNC = process.env.RB_VNC || ''; // host:port of the VNC server to proxy (optional)
@@ -121,9 +123,8 @@ function getCtx() {
   return (ctxP ??= chromium.launchPersistentContext(PROFILE, {
     // Full Chromium in new-headless mode and without automation flags, so sites see an ordinary browser (fewer captchas).
     channel: 'chromium', headless: true, chromiumSandbox: true, acceptDownloads: false, viewport: { width: 1280, height: 720 },
-    locale: 'en-US', ignoreDefaultArgs: ['--enable-automation'], args: ['--disable-blink-features=AutomationControlled'],
+    locale: 'en-US', ignoreDefaultArgs: ['--enable-automation'], args: ['--disable-blink-features=AutomationControlled', ...(PROXY ? ['--proxy-pac-url=data:application/x-ns-proxy-autoconfig;base64,' + Buffer.from(PAC).toString('base64')] : [])],
     ...(major && { userAgent: `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36` }),
-    ...(PROXY && { proxy: { server: PROXY } }),
   }).then((ctx) => {
     ctx.on('close', () => (ctxP = undefined));
     ctx.pages().forEach(wire);
