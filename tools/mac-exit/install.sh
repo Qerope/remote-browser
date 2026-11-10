@@ -7,13 +7,13 @@ NODE=$(command -v node) || { echo "node not found"; exit 1; }
 DIR="$HOME/Library/Application Support/remote-browser-exit"
 PLIST="$HOME/Library/LaunchAgents/com.remote-browser.exit.plist"
 mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
-cp "$(dirname "$0")/socks.js" "$DIR/socks.js"
+cp "$(dirname "$0")/socks.mjs" "$DIR/socks.mjs"
 cat > "$PLIST" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.remote-browser.exit</string>
-  <key>ProgramArguments</key><array><string>$NODE</string><string>$DIR/socks.js</string></array>
+  <key>ProgramArguments</key><array><string>$NODE</string><string>$DIR/socks.mjs</string></array>
   <key>EnvironmentVariables</key><dict><key>HOST</key><string>$1</string><key>ALLOW</key><string>$2</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
