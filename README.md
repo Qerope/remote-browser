@@ -25,7 +25,7 @@ sudo cat /etc/remote-browser.env  # generated password + RB_TOTP_SECRET (add it 
 Options (environment variables for the installer):
 
 - `DOMAIN=rb.example.com`: nginx vhost + Let's Encrypt certificate. DNS must already point at the host. Re-running is safe.
-- `VNC=10.147.20.2:5900`: adds a **Mac** button that opens a noVNC viewer to that host (for example a Mac over ZeroTier). The service is allowed to reach only that IP inside the private ranges. macOS Screen Sharing asks for your Mac username and password.
+- `VNC=10.147.20.2:5900`: adds a **Mac** button that opens a noVNC viewer to that host (for example a Mac over ZeroTier). Several Macs: `VNC='Studio=10.147.20.2:5900,Laptop=10.147.20.98:5900'` (the viewer gets a picker). The service is allowed to reach only those IPs inside the private ranges. macOS Screen Sharing asks for your Mac username and password.
 
 Without a domain, connect through a tunnel:
 
@@ -47,7 +47,7 @@ npm test
 
 ## Fewer captchas: exit through your own IP
 
-Datacenter IPs trigger captchas and logouts. `tools/mac-exit` is a small SOCKS5 proxy for a home machine on the same ZeroTier network (macOS LaunchAgent, `tools/mac-exit/install.sh <its-zt-ip> <server-zt-ip>`). It only accepts the server and refuses private, loopback and LAN destinations. Then install with `PROXY=<its-zt-ip>:1080`. There is no direct fallback, so your IP never changes mid-session; if the home machine is asleep the browser has no internet. To turn it off, delete the `RB_PROXY` line from `/etc/remote-browser.env` and restart the service.
+Datacenter IPs trigger captchas and logouts. `tools/mac-exit` is a small SOCKS5 proxy for a home machine on the same ZeroTier network (macOS LaunchAgent, `tools/mac-exit/install.sh <its-zt-ip> <server-zt-ip>`). It only accepts the server and refuses private, loopback and LAN destinations. Then install with `PROXY=<its-zt-ip>:1080`. With more than one home machine, list them: `PROXY=10.147.20.98:1080,10.147.20.2:1080`; Chromium uses the first that answers (they share your home IP, so failing over doesn't change it). There is no direct fallback, so your IP never changes mid-session; if the home machine is asleep the browser has no internet. To turn it off, delete the `RB_PROXY` line from `/etc/remote-browser.env` and restart the service.
 
 ## Userscripts
 

@@ -13,12 +13,22 @@ import { build } from './userscripts.js';
 const LISTEN = process.env.RB_LISTEN || '/run/remote-browser/sock'; // unix path, or a port on 127.0.0.1
 const PROFILE = process.env.RB_PROFILE || './profile';
 const SCRIPTS = process.env.RB_SCRIPTS || './scripts';
-const PROXY = process.env.RB_PROXY || ''; // optional SOCKS5 exit as host:port. No direct fallback: a flipping IP mid-session triggers captchas and logouts
-if (PROXY && !/^[\w.-]+:\d+$/.test(PROXY)) { console.error('RB_PROXY must be host:port'); process.exit(1); }
-const PAC = `function FindProxyForURL(){return "SOCKS5 ${PROXY}"}`;
+// Optional SOCKS5 exits as host:port[,host:port…], tried in order (e.g. two Macs on the same home connection).
+// No direct fallback: a flipping IP mid-session triggers captchas and logouts.
+const PROXIES = (process.env.RB_PROXY || '').split(',').map((s) => s.trim()).filter(Boolean);
+if (PROXIES.some((p) => !/^[\w.-]+:\d+$/.test(p))) { console.error('RB_PROXY must be host:port[,host:port…]'); process.exit(1); }
+const PROXY = PROXIES.length > 0;
+const PAC = `function FindProxyForURL(){return "${PROXIES.map((p) => 'SOCKS5 ' + p).join('; ')}"}`;
 const PASSWORD = process.env.RB_PASSWORD || '';
 const TOTP = process.env.RB_TOTP_SECRET || '';
-const VNC = process.env.RB_VNC || ''; // host:port of the VNC server to proxy (optional)
+// VNC servers to proxy (optional): [Name=]host:port[,[Name=]host:port…], e.g. "Studio=10.147.20.2:5900,Laptop=10.147.20.98:5900".
+const VNCS = (process.env.RB_VNC || '').split(',').map((s) => s.trim()).filter(Boolean).map((s, i) => {
+  const [name, addr] = s.includes('=') ? s.split('=', 2) : [`Mac ${i + 1}`, s];
+  const c = addr.lastIndexOf(':');
+  if (c < 1 || !/^\d+$/.test(addr.slice(c + 1))) { console.error('RB_VNC entries must be [Name=]host:port'); process.exit(1); }
+  return { name: name.trim(), host: addr.slice(0, c), port: +addr.slice(c + 1) };
+});
+const VNC = VNCS.length > 0;
 if (PASSWORD.length < 12 || !/^[A-Z2-7]{16,}$/i.test(TOTP)) { console.error('RB_PASSWORD (12+ chars) and RB_TOTP_SECRET (base32, 16+ chars) are required'); process.exit(1); }
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
@@ -92,6 +102,7 @@ const server = http.createServer(async (req, res) => {
   }
   const f = FILES[url];
   if (url.startsWith('/vnc') && !VNC) return send(404, 'VNC is not configured', 'text/plain');
+  if (url === '/api/vnc') return authed(req) ? send(200, JSON.stringify(VNCS.map((v) => v.name)), 'application/json') : send(401, 'unauthorized', 'text/plain');
   if (!f) return send(404, 'not found', 'text/plain');
   if (f[2] && !authed(req)) return send(401, 'unauthorized', 'text/plain');
   send(200, pub(f[0]), f[1] + '; charset=utf-8');
@@ -209,11 +220,11 @@ server.on('upgrade', (req, sock, head) => {
   const o = req.headers.origin;
   const p = new URL(req.url, 'http://x').pathname;
   if (!(p === '/ws' || (p === '/vnc' && VNC)) || !authed(req) || (o && new URL(o).host !== req.headers.host)) { sock.write('HTTP/1.1 403 Forbidden\r\n\r\n'); return sock.destroy(); }
-  wss.handleUpgrade(req, sock, head, p === '/vnc' ? onVnc : onConnect);
+  const target = VNCS[+(new URL(req.url, 'http://x').searchParams.get('m') || 0)] ?? VNCS[0];
+  wss.handleUpgrade(req, sock, head, p === '/vnc' ? (ws) => onVnc(ws, target) : onConnect);
 });
 // Raw RFB bytes between the browser (noVNC) and the VNC server, no inspection.
-function onVnc(ws) {
-  const [host, port] = [VNC.slice(0, VNC.lastIndexOf(':')), +VNC.slice(VNC.lastIndexOf(':') + 1)];
+function onVnc(ws, { host, port }) {
   const tcp = net.connect(port, host);
   tcp.setNoDelay(true);
   tcp.on('data', (d) => { // pause the Mac while the browser's link is backed up, instead of queueing stale frames
